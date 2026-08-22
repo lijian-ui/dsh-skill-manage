@@ -1,0 +1,5 @@
+# @lijian-ui/dsh-skill-manage bundle patch.
+- insert:
+    - id: skill-manage
+      name: '@lijian-ui/dsh-skill-manage'
+      config: {}
