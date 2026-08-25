@@ -2,7 +2,7 @@
 
 **English** | [中文](./README.zh-CN.md)
 
-> A skill management plugin for DeepSeek Harness (dsh) desktop: list / enable / disable / delete / add / migrate skills, filling the gap in dsh's official skill toggle control.
+> A skill management plugin for DeepSeek Harness (dsh) desktop: list / enable / disable / delete / add skills, filling the gap in dsh's official skill toggle control.
 
 ## Features
 
@@ -11,9 +11,8 @@
 | Skill List | Display all skills grouped by scope (global / workspace), with search |
 | Enable / Disable | Toggle switch for hot enable/disable, no restart required |
 | Delete Skill | Permanently remove skill files with a custom confirmation dialog |
-| Add Skill | Upload new skills from local files (directory bundle or single file) |
+| Add Skill | Pick a .zip archive and auto-extract it into the global skills directory (~/.dsh/skills) |
 | Skill Details | Render skill content as Markdown, display frontmatter metadata table |
-| Batch Migrate | Copy or move skills between global / workspace scopes |
 
 ## Background
 
@@ -70,8 +69,7 @@ Build output goes to `lib/` and is automatically synced to `node_modules/@lijian
    - Click the delete button to permanently remove a skill
    - Click a skill card to view details
    - Use the search box to filter skills
-   - Click "Add skill" to upload a new skill
-   - Click "Batch migrate" to move skills between scopes
+   - Click "Add skill" and pick a .zip archive to import into the global skills directory
 
 ### Skill File Convention
 
@@ -97,9 +95,9 @@ Build output goes to `lib/` and is automatically synced to `node_modules/@lijian
 extensions/dsh-skill-manage/
 ├── src/
 │   ├── index.ts                    # Host entry
-│   ├── remote.ts                   # Host RPC methods (list/setEnabled/deleteSkill/migrate etc.)
+│   ├── remote.ts                   # Host RPC methods (list/setEnabled/deleteSkill etc.)
 │   ├── skill-files.ts              # File conventions (DISABLED_SUFFIX, collectSkillEntries)
-│   ├── scope.ts                    # Migration engine
+│   ├── skill-files.ts              # File conventions (DISABLED_SUFFIX, collectSkillEntries, frontmatter validation)
 │   └── client/
 │       ├── index.ts                # Client entry (SECTION_ID, RPC registration, inject)
 │       ├── SkillManageSection.tsx  # Main settings component (card list + toggle + detail dialog)
@@ -121,10 +119,8 @@ Provides the following RPC methods:
 | `content(name, sessionId)` | Get full skill content |
 | `setEnabled(name, sessionId, enabled)` | Enable/disable skill (file rename) |
 | `deleteSkill(name, sessionId)` | Delete skill |
-| `addSkill(sessionId, payload)` | Add new skill |
+| `importZip(sessionId, payload)` | Extract a .zip archive and install the skill into the global skills dir (`<DSH_HOME>/skills`, default `~/.dsh/skills`) |
 | `workspaces()` | List available workspaces |
-| `migrate(name, sessionId, payload)` | Migrate a single skill |
-| `batchMigrate(sessionId, payload)` | Batch migrate skills |
 
 ### Client Side (`src/client/`)
 

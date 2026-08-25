@@ -42,9 +42,8 @@ interface SkillManageSectionProps {
   listWorkspaces: () => Promise<{ workspaces: WorkspaceInfo[] }>
   loadContent: (name: string) => Promise<SkillContent | null>
   setSkillEnabled: (name: string, enabled: boolean) => Promise<{ name: string; enabled: boolean }>
-  batchMigrateSkill: (payload: { from: string | null; targets: (string | null)[]; mode: 'copy' | 'move'; names: string[] }) => Promise<{ results: Array<{ name: string; target?: string | null; ok: boolean; error?: string }> }>
   removeSkill: (name: string) => Promise<{ name: string }>
-  addSkill: (payload: { kind: 'bundle' | 'flat'; files: Array<{ path: string; base64: string }>; workspace: string | null }) => Promise<{ name: string; kind: 'bundle' | 'flat'; scope: ScopeInfo }>
+  importSkillZip: (base64: string) => Promise<{ name: string }>
   refreshSkillCache: () => void
 }
 
@@ -87,9 +86,6 @@ const CSS_TEXT = `
 .SKM_addButton{box-sizing:border-box;width:28px;height:28px;color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer;background:0 0;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;padding:0;display:inline-flex;align-items:center;justify-content:center}
 .SKM_addButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid)}
 .SKM_addButton:disabled{cursor:default;opacity:.6}
-.SKM_addMenu{position:absolute;top:calc(100% + 4px);right:0;background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;box-shadow:var(--dsw-shadow-lv1);flex-direction:column;padding:4px;display:flex;z-index:10}
-.SKM_addMenuItem{font:inherit;color:var(--dsw-alias-label-primary);cursor:pointer;background:0 0;border:none;border-radius:6px;padding:6px 12px;font-size:13px;line-height:20px;text-align:left;white-space:nowrap}
-.SKM_addMenuItem:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .SKM_addStatus{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;margin:0}
 .SKM_addErrorBanner{border:1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 40%, transparent);background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, transparent);border-radius:8px;align-items:center;gap:10px;padding:8px 12px;display:flex}
 .SKM_addErrorText{color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;flex:1;min-width:0}
@@ -102,9 +98,6 @@ const CSS_TEXT = `
 .SKM_scopeChip[data-active=true]{background:color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent);border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary)}
 .SKM_scopeChipCount{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;font-size:11px;line-height:16px}
 .SKM_scopeChip[data-active=true] .SKM_scopeChipCount{color:var(--dsw-alias-state-business-primary)}
-.SKM_migrateButton{box-sizing:border-box;width:28px;height:28px;color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer;background:0 0;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;padding:0;display:inline-flex;align-items:center;justify-content:center}
-.SKM_migrateButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid)}
-.SKM_migrateButton:disabled{cursor:default;opacity:.6}
 .SKM_visuallyHidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;clip:rect(0 0 0 0);overflow:hidden;white-space:nowrap}
 .SKM_detailOverlay{position:fixed;inset:0;background:var(--dsw-alias-bg-mask-1);align-items:center;justify-content:center;display:flex;z-index:1000}
 .SKM_detailBox{background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:var(--dsw-shadow-lv2);width:640px;max-width:calc(100vw - 48px);max-height:85vh;flex-direction:column;display:flex}
@@ -174,20 +167,6 @@ const CSS_TEXT = `
 .SKM_scopeCancel:hover{background:var(--dsw-alias-interactive-bg-hover-solid)}
 .SKM_scopeConfirm{color:var(--dsw-alias-label-primary-foreground);background:var(--dsw-alias-state-business-primary);border:none}
 .SKM_scopeConfirm:disabled{cursor:default;opacity:.6}
-.SKM_migrateSection{flex-direction:column;gap:6px;display:flex}
-.SKM_migrateLabel{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;margin:0}
-.SKM_migrateList{border:1px solid var(--dsw-alias-border-l2);border-radius:8px;max-height:220px;overflow-y:auto;margin:0;padding:4px;list-style:none;display:flex;flex-direction:column;gap:2px}
-.SKM_migrateItem{font:inherit;color:var(--dsw-alias-label-primary);cursor:pointer;background:0 0;border:none;border-radius:6px;padding:6px 10px;font-size:13px;line-height:20px;text-align:left;display:flex;align-items:center;gap:8px;width:100%}
-.SKM_migrateItem:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.SKM_migrateItem input{margin:0;accent-color:var(--dsw-alias-state-business-primary)}
-.SKM_migrateItemName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.SKM_migrateItemState{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;flex:none}
-.SKM_migrateSelectAll{font:inherit;color:var(--dsw-alias-label-primary);cursor:pointer;background:0 0;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:2px 10px;font-size:12px;line-height:18px}
-.SKM_migrateSelectAll:hover{background:var(--dsw-alias-interactive-bg-hover-solid)}
-.SKM_migrateResult{color:var(--dsw-alias-state-success-primary);font-size:13px;line-height:20px;margin:0}
-.SKM_migrateResult[data-ok=false]{color:var(--dsw-alias-state-error-primary)}
-.SKM_migrateResultList{border:1px solid var(--dsw-alias-border-l3);border-radius:8px;margin:6px 0 0;padding:4px 8px;list-style:none;display:flex;flex-direction:column;gap:2px;max-height:120px;overflow-y:auto}
-.SKM_migrateResultList li{color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px}
 `
 
 const TAG_ID = '@lijian-ui/dsh-skill-manage/SkillManageSection.module.css'
@@ -248,141 +227,6 @@ function DetailContent({ raw }: { raw: string }): ReactNode {
   )
 }
 
-interface MigrateDialogProps {
-  t: Translate
-  options: WorkspaceInfo[] | null
-  from: string
-  setFrom: (value: string) => void
-  targets: Set<string>
-  toggleTarget: (value: string) => void
-  mode: 'copy' | 'move'
-  setMode: (value: 'copy' | 'move') => void
-  skills: SkillSummary[]
-  selected: Set<string>
-  toggle: (skillName: string) => void
-  selectAll: () => void
-  busy: boolean
-  result: Array<{ name: string; target?: string | null; ok: boolean; error?: string }> | null
-  error: string | null
-  onConfirm: () => void
-  onCancel: () => void
-  onClose: () => void
-}
-
-function MigrateDialog(props: MigrateDialogProps): ReactNode {
-  const { t, options, from, setFrom, targets, toggleTarget, mode, setMode, skills, selected, toggle, selectAll, busy, result, error, onConfirm, onCancel, onClose } = props
-  const known = Array.isArray(options) ? options : []
-  const fromLabel = from === '' ? t('migratePickSource') : from === 'global' ? t('scopeGlobal') : from
-  const okCount = Array.isArray(result) ? result.filter((item) => item.ok === true).length : 0
-  const failCount = Array.isArray(result) ? result.length - okCount : 0
-  const targetLabelOf = (value: string | null | undefined): string => (value === null || value === undefined ? t('scopeGlobal') : value === 'global' ? t('scopeGlobal') : value)
-
-  return (
-    <div className="SKM_scopeOverlay" role="dialog" aria-modal="true">
-      <div className="SKM_scopeBox">
-        <h4>{t('migrateTitle')}</h4>
-        <div className="SKM_migrateSection">
-          <p className="SKM_migrateLabel">{t('migrateFrom')}</p>
-          <div className="SKM_scopeOptions">
-            <button type="button" className="SKM_scopeOption" data-active={from === 'global' ? 'true' : undefined} onClick={() => setFrom('global')}>
-              <input type="radio" name="migrate-from" checked={from === 'global'} readOnly />
-              <span>{t('scopeGlobal')}</span>
-            </button>
-            {known.map((option) => (
-              <button key={option.path} type="button" className="SKM_scopeOption" data-active={from === option.path ? 'true' : undefined} onClick={() => setFrom(option.path)}>
-                <input type="radio" name="migrate-from" checked={from === option.path} readOnly />
-                <span>{option.label}</span>
-                <span className="SKM_wsPath" title={option.path}>{option.path}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="SKM_migrateSection">
-          <p className="SKM_migrateLabel">{t('migrateTo')}</p>
-          <div className="SKM_scopeOptions">
-            <button type="button" className="SKM_scopeOption" data-active={targets.has('global') ? 'true' : undefined} onClick={() => toggleTarget('global')}>
-              <input type="checkbox" checked={targets.has('global')} readOnly />
-              <span>{t('scopeGlobal')}</span>
-            </button>
-            {known.map((option) => (
-              <button key={option.path} type="button" className="SKM_scopeOption" data-active={targets.has(option.path) ? 'true' : undefined} onClick={() => toggleTarget(option.path)}>
-                <input type="checkbox" checked={targets.has(option.path)} readOnly />
-                <span>{option.label}</span>
-                <span className="SKM_wsPath" title={option.path}>{option.path}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="SKM_migrateSection">
-          <p className="SKM_migrateLabel">{t('migrateMode')}</p>
-          <div className="SKM_scopeOptions">
-            <button type="button" className="SKM_scopeOption" data-active={mode === 'move' ? 'true' : undefined} onClick={() => setMode('move')}>
-              <input type="radio" name="migrate-mode" checked={mode === 'move'} readOnly />
-              <span>{t('migrateModeMove')}</span>
-            </button>
-            <button type="button" className="SKM_scopeOption" data-active={mode === 'copy' ? 'true' : undefined} onClick={() => setMode('copy')}>
-              <input type="radio" name="migrate-mode" checked={mode === 'copy'} readOnly />
-              <span>{t('migrateModeCopy')}</span>
-            </button>
-          </div>
-        </div>
-        {from === '' ? (
-          <p className="SKM_scopeHint">{t('migratePickSource')}</p>
-        ) : result === null ? (
-          <div className="SKM_migrateSection">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <p className="SKM_migrateLabel">{fromLabel + ' · ' + skills.length}</p>
-              <button type="button" className="SKM_migrateSelectAll" onClick={selectAll}>{t('migrateSelectAll')}</button>
-            </div>
-            {skills.length === 0 ? (
-              <p className="SKM_scopeHint">{t('migrateNoSkills')}</p>
-            ) : (
-              <ul className="SKM_migrateList">
-                {skills.map((skill) => (
-                  <li key={skill.name}>
-                    <button type="button" className="SKM_migrateItem" onClick={() => toggle(skill.name)}>
-                      <input type="checkbox" checked={selected.has(skill.name)} readOnly />
-                      <span className="SKM_migrateItemName">{skill.name}</span>
-                      <span className="SKM_migrateItemState">{skill.enabled !== false ? t('enabledTag') : t('disabledTag')}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        ) : null}
-        {error !== null && error !== undefined ? <p className="SKM_scopeHint" role="alert">{error}</p> : null}
-        {result !== null ? (
-          <div className="SKM_migrateSection">
-            <p className="SKM_migrateResult" data-ok={failCount === 0 ? 'true' : 'false'}>{t('migrateDoneOk') + okCount + t('migrateDoneFail') + failCount + t('migrateDoneSuffix')}</p>
-            {failCount > 0 ? (
-              <div>
-                <p className="SKM_migrateLabel">{t('migrateErrors')}</p>
-                <ul className="SKM_migrateResultList">
-                  {result.filter((item) => item.ok !== true).map((item) => (
-                    <li key={item.name + '-' + (item.target ?? '')}>{item.name + (item.target === null || item.target === undefined ? '' : ' → ' + targetLabelOf(item.target)) + '：' + (item.error ?? '')}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        {mode === 'move' && targets.size > 1 ? <p className="SKM_scopeHint">{t('migrateMoveSingle')}</p> : null}
-        <div className="SKM_scopeActions">
-          {result === null ? (
-            <>
-              <button type="button" className="SKM_scopeAction SKM_scopeCancel" disabled={busy} onClick={onCancel}>{t('migrateCancel')}</button>
-              <button type="button" className="SKM_scopeAction SKM_scopeConfirm" disabled={busy || from === '' || targets.size === 0 || selected.size === 0 || targets.has(from) || (mode === 'move' && targets.size > 1)} onClick={onConfirm}>{busy ? t('migrateBusy') : t('migrateConfirm')}</button>
-            </>
-          ) : (
-            <button type="button" className="SKM_scopeAction SKM_scopeConfirm" onClick={onClose}>{t('migrateClose')}</button>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 interface ListStateLoading { status: 'loading' }
 interface ListStateError { status: 'error' }
 interface ListStateReady { status: 'ready'; skills: SkillSummary[] }
@@ -395,39 +239,19 @@ interface DetailState {
 
 interface AddingState { status: 'idle' | 'busy' | 'ok' | 'error'; message?: string }
 
-interface MigratorState {
-  from: string
-  targets: Set<string>
-  mode: 'copy' | 'move'
-  selected: Set<string>
-  busy: boolean
-  result: Array<{ name: string; target?: string | null; ok: boolean; error?: string }> | null
-  error: string | null
-}
-
-declare global {
-  interface HTMLInputElement {
-    webkitdirectory?: string
-    webkitRelativePath?: string
-  }
-}
-
 export function SkillManageSection(props: SkillManageSectionProps): ReactNode {
-  const { t, currentSessionId, listSkills, loadContent, setSkillEnabled, removeSkill, addSkill, listWorkspaces, batchMigrateSkill, refreshSkillCache } = props
+  const { t, currentSessionId, listSkills, loadContent, setSkillEnabled, removeSkill, importSkillZip, listWorkspaces, refreshSkillCache } = props
   const [query, setQuery] = useState('')
   const [listState, setListState] = useState<ListState>({ status: 'loading' })
   const [request, setRequest] = useState(0)
   const [detail, setDetail] = useState<DetailState | null>(null)
   const [ops, setOps] = useState<Record<string, { status: 'busy' | 'ok' | 'error' }>>({})
   const [adding, setAdding] = useState<AddingState>({ status: 'idle' })
-  const [addMenuOpen, setAddMenuOpen] = useState(false)
   const [wsOptions, setWsOptions] = useState<WorkspaceInfo[] | null>(null)
   const [scopeFilter, setScopeFilter] = useState('global')
-  const [migrator, setMigrator] = useState<MigratorState | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<SkillSummary | null>(null)
   const inflight = useRef(new Set<string>())
-  const folderInput = useRef<HTMLInputElement>(null)
-  const fileInput = useRef<HTMLInputElement>(null)
+  const zipInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => { injectCss() }, [])
 
@@ -519,25 +343,17 @@ export function SkillManageSection(props: SkillManageSectionProps): ReactNode {
 
   const cleanHostError = (error: unknown): string => String((error as { message?: string })?.message ?? error).replace(/^skillManage\.[a-zA-Z]+ failed: [a-z-]+: /, '')
 
-  const runAdd = (kind: 'bundle' | 'flat', files: File[]): void => {
-    if (files.length === 0) return
-    if (files.length > 200) {
-      setAdding({ status: 'error', message: t('addTooMany') })
-      return
-    }
-    if (kind === 'bundle' && !files.some((file) => {
-      const parts = (file.webkitRelativePath ?? '').replaceAll('\\', '/').split('/')
-      return parts.length === 2 && parts[1] === 'SKILL.md'
-    })) {
-      setAdding({ status: 'error', message: t('addNoSkillFile') })
+  const onPickZip = (event: ChangeEvent<HTMLInputElement>): void => {
+    const input = event.currentTarget
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file) return
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      setAdding({ status: 'error', message: t('addNotZip') })
       return
     }
     setAdding({ status: 'busy' })
-    const workspace = scopeFilter === 'global' ? null : scopeFilter
-    Promise.all(files.map(readFileAsBase64)).then((items) => {
-      const payloadFiles = items.map((base64, index) => ({ path: (files[index].webkitRelativePath || files[index].name).replaceAll('\\', '/'), base64 }))
-      return addSkill({ kind, files: payloadFiles, workspace })
-    }).then(() => {
+    Promise.resolve().then(() => readFileAsBase64(file)).then((base64) => importSkillZip(base64)).then(() => {
       setAdding({ status: 'ok' })
       setTimeout(() => setRequest((value) => value + 1), 700)
       setTimeout(() => setAdding({ status: 'idle' }), 2500)
@@ -545,64 +361,6 @@ export function SkillManageSection(props: SkillManageSectionProps): ReactNode {
       setAdding({ status: 'error', message: cleanHostError(error) })
     })
   }
-
-  const openMigrator = (): void => {
-    setMigrator({ from: '', targets: new Set(), mode: 'move', selected: new Set(), busy: false, result: null, error: null })
-  }
-
-  const applyBatchMigrate = (): void => {
-    const m = migrator
-    if (m === null) return
-    if (m.from === '') { setMigrator({ ...m, error: t('migratePickSource') }); return }
-    if (m.targets.size === 0) { setMigrator({ ...m, error: t('migratePickTarget') }); return }
-    if (m.targets.has(m.from)) { setMigrator({ ...m, error: t('migrateSameScope') }); return }
-    if (m.mode === 'move' && m.targets.size > 1) { setMigrator({ ...m, error: t('migrateMoveSingle') }); return }
-    if (m.selected.size === 0) { setMigrator({ ...m, error: t('migratePickSkills') }); return }
-    setMigrator({ ...m, busy: true, error: null })
-    const payload = {
-      from: m.from === 'global' ? null : m.from,
-      targets: [...m.targets].map((value) => (value === 'global' ? null : value)),
-      mode: m.mode,
-      names: [...m.selected],
-    }
-    Promise.resolve().then(() => batchMigrateSkill(payload)).then((snapshot) => {
-      const results = snapshot !== null && typeof snapshot === 'object' && Array.isArray(snapshot.results) ? snapshot.results : []
-      setMigrator((prev) => (prev === null ? prev : { ...prev, busy: false, result: results }))
-      reloadAfterHot()
-    }, (error) => {
-      setMigrator((prev) => (prev === null ? prev : { ...prev, busy: false, error: cleanHostError(error) }))
-    })
-  }
-
-  const onPickFolder = (event: ChangeEvent<HTMLInputElement>): void => {
-    const input = event.currentTarget
-    const files = [...input.files]
-    input.value = ''
-    if (files.length === 0) return
-    if (!files[0].webkitRelativePath) {
-      setAdding({ status: 'error', message: t('addFolderUnsupported') })
-      return
-    }
-    runAdd('bundle', files)
-  }
-
-  const onPickFile = (event: ChangeEvent<HTMLInputElement>): void => {
-    const input = event.currentTarget
-    const files = [...input.files]
-    input.value = ''
-    if (files.length !== 1) return
-    runAdd('flat', files)
-  }
-
-  useEffect(() => {
-    if (!addMenuOpen || typeof document === 'undefined') return
-    const close = (event: MouseEvent): void => {
-      if (event.target instanceof Element && event.target.closest('[data-add-menu]')) return
-      setAddMenuOpen(false)
-    }
-    document.addEventListener('click', close)
-    return () => document.removeEventListener('click', close)
-  }, [addMenuOpen])
 
   useEffect(() => {
     if (detail === null || typeof document === 'undefined') return
@@ -626,7 +384,6 @@ export function SkillManageSection(props: SkillManageSectionProps): ReactNode {
   const scopeCount = (key: string): number => skills.reduce((sum, skill) => sum + (scopeOf(skill) === key ? 1 : 0), 0)
   const scoped = skills.filter((skill) => scopeOf(skill) === scopeFilter)
   const filtered = scoped.filter((skill) => skill.name.toLocaleLowerCase().includes(normalizedQuery))
-  const migratorSkills = migrator !== null ? skills.filter((skill) => scopeOf(skill) === migrator.from) : []
 
   return (
     <div className="SKM_section" aria-busy={listState.status === 'loading'}>
@@ -647,25 +404,13 @@ export function SkillManageSection(props: SkillManageSectionProps): ReactNode {
           <div className="SKM_catalogHeading">
             <h3>{t('catalog')}</h3>
             <span data-skill-count={filtered.length}>{filtered.length}</span>
-            <span className="SKM_addActions" data-add-menu="1">
-              <button type="button" className="SKM_migrateButton" aria-label={t('migrateButton')} title={t('migrateButton')} disabled={listState.status !== 'ready' || skills.length === 0 || adding.status === 'busy'} onClick={openMigrator}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M2.5 5h11M11 2.5 13.5 5 11 7.5" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M13.5 11h-11M5 8.5 2.5 11 5 13.5" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-              <button type="button" className="SKM_addButton" aria-label={t('addButton')} title={t('addButton')} disabled={adding.status === 'busy'} onClick={() => setAddMenuOpen((value) => !value)}>
+            <span className="SKM_addActions">
+              <button type="button" className="SKM_addButton" aria-label={t('addButton')} title={t('addButton')} disabled={adding.status === 'busy'} onClick={() => zipInput.current?.click()}>
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M8 3.5v9" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />
                   <path d="M3.5 8h9" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />
                 </svg>
               </button>
-              {addMenuOpen ? (
-                <span className="SKM_addMenu" role="menu">
-                  <button type="button" className="SKM_addMenuItem" role="menuitem" onClick={() => { setAddMenuOpen(false); folderInput.current?.click() }}>{t('addMenuFolder')}</button>
-                  <button type="button" className="SKM_addMenuItem" role="menuitem" onClick={() => { setAddMenuOpen(false); fileInput.current?.click() }}>{t('addMenuFile')}</button>
-                </span>
-              ) : null}
             </span>
           </div>
           <div className="SKM_scopeBar" role="tablist">
@@ -720,8 +465,7 @@ export function SkillManageSection(props: SkillManageSectionProps): ReactNode {
               })}
             </ul>
           ) : null}
-          <input ref={folderInput} className="SKM_fileInput" type="file" webkitdirectory="" onChange={onPickFolder} />
-          <input ref={fileInput} className="SKM_fileInput" type="file" accept=".md,text/markdown" onChange={onPickFile} />
+          <input ref={zipInput} className="SKM_fileInput" type="file" accept=".zip,application/zip,application/x-zip-compressed" onChange={onPickZip} />
           {detail !== null ? (
             <div className="SKM_detailOverlay" role="dialog" aria-modal="true" onClick={(e) => { if (e.target === e.currentTarget) setDetail(null) }}>
               <div className="SKM_detailBox">
@@ -751,44 +495,6 @@ export function SkillManageSection(props: SkillManageSectionProps): ReactNode {
                 </div>
               </div>
             </div>
-          ) : null}
-          {migrator !== null ? (
-            <MigrateDialog
-              t={t}
-              options={wsOptions}
-              from={migrator.from}
-              setFrom={(value) => setMigrator((prev) => (prev === null ? prev : { ...prev, from: value, error: null }))}
-              targets={migrator.targets}
-              toggleTarget={(value) => setMigrator((prev) => {
-                if (prev === null) return prev
-                const next = new Set(prev.targets)
-                if (next.has(value)) next.delete(value)
-                else next.add(value)
-                return { ...prev, targets: next, error: null, ...(next.size > 1 && prev.mode === 'move' ? { mode: 'copy' } : {}) }
-              })}
-              mode={migrator.mode}
-              setMode={(value) => setMigrator((prev) => (prev === null ? prev : { ...prev, mode: value }))}
-              skills={migratorSkills}
-              selected={migrator.selected}
-              toggle={(skillName) => setMigrator((prev) => {
-                if (prev === null) return prev
-                const next = new Set(prev.selected)
-                if (next.has(skillName)) next.delete(skillName)
-                else next.add(skillName)
-                return { ...prev, selected: next }
-              })}
-              selectAll={() => setMigrator((prev) => {
-                if (prev === null) return prev
-                const all = new Set(migratorSkills.map((skill) => skill.name))
-                return { ...prev, selected: prev.selected.size === all.size ? new Set() : all }
-              })}
-              busy={migrator.busy}
-              result={migrator.result}
-              error={migrator.error}
-              onConfirm={applyBatchMigrate}
-              onCancel={() => setMigrator(null)}
-              onClose={() => setMigrator(null)}
-            />
           ) : null}
         </div>
       )}

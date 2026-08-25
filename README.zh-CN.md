@@ -2,7 +2,7 @@
 
 [English](./README.md) | **中文**
 
-> 为 DeepSeek Harness (dsh) 桌面端提供技能管理功能：列表 / 启用 / 停用 / 删除 / 添加 / 迁移，填补 dsh 官方在 skill 开关控制方面的空白。
+> 为 DeepSeek Harness (dsh) 桌面端提供技能管理功能：列表 / 启用 / 停用 / 删除 / 添加，填补 dsh 官方在 skill 开关控制方面的空白。
 
 ## 功能概览
 
@@ -11,9 +11,8 @@
 | 技能列表 | 按作用域（全局 / 工作区）分组展示所有技能，支持搜索 |
 | 启用 / 停用 | 滑块按钮热切换，无需重启即可生效 |
 | 删除技能 | 永久删除技能文件，带自定义确认弹窗 |
-| 添加技能 | 从本地文件上传新技能（目录束或单文件） |
+| 添加技能 | 选择 .zip 压缩包，自动解压安装到全局技能目录（~/.dsh/skills） |
 | 技能详情 | Markdown 渲染技能内容，展示 frontmatter 元数据表格 |
-| 批量迁移 | 在全局 / 工作区作用域之间复制或移动技能 |
 
 ## 背景
 
@@ -70,8 +69,7 @@ npm run typecheck
    - 点击删除按钮永久删除技能
    - 点击技能卡片查看详情
    - 使用搜索框过滤技能
-   - 点击"添加技能"上传新技能
-   - 点击"批量迁移"在作用域之间移动技能
+   - 点击"添加技能"并选择 .zip 压缩包，导入到全局技能目录
 
 ### 技能文件约定
 
@@ -97,9 +95,9 @@ npm run typecheck
 extensions/dsh-skill-manage/
 ├── src/
 │   ├── index.ts                    # Host 端入口
-│   ├── remote.ts                   # Host 端 RPC 方法（list/setEnabled/deleteSkill/migrate 等）
+│   ├── remote.ts                   # Host 端 RPC 方法（list/setEnabled/deleteSkill 等）
 │   ├── skill-files.ts              # 文件约定（DISABLED_SUFFIX、collectSkillEntries）
-│   ├── scope.ts                    # 迁移引擎
+│   ├── skill-files.ts              # 文件约定（DISABLED_SUFFIX、collectSkillEntries、frontmatter 校验）
 │   └── client/
 │       ├── index.ts                # Client 端入口（SECTION_ID、RPC 注册、inject）
 │       ├── SkillManageSection.tsx  # 主设置页组件（卡片列表 + 滑块 + 详情弹窗）
@@ -121,15 +119,13 @@ extensions/dsh-skill-manage/
 | `content(name, sessionId)` | 获取技能完整内容 |
 | `setEnabled(name, sessionId, enabled)` | 启用/停用技能（文件重命名） |
 | `deleteSkill(name, sessionId)` | 删除技能 |
-| `addSkill(sessionId, payload)` | 添加新技能 |
+| `importZip(sessionId, payload)` | 解压 .zip 压缩包，导入技能到全局技能目录（`<DSH_HOME>/skills`，默认 `~/.dsh/skills`） |
 | `workspaces()` | 列出可用工作区 |
-| `migrate(name, sessionId, payload)` | 迁移单个技能 |
-| `batchMigrate(sessionId, payload)` | 批量迁移技能 |
 
 ### Client 端（`src/client/`）
 
 - **`index.ts`**：注册设置页 section，通过 `ctx.slots.inject` 注入到 dsh 设置面板
-- **`SkillManageSection.tsx`**：React 组件，渲染技能卡片列表、滑块按钮、详情弹窗、删除确认弹窗、迁移弹窗
+- **`SkillManageSection.tsx`**：React 组件，渲染技能卡片列表、滑块按钮、详情弹窗、删除确认弹窗
 - **`client-i18n.ts`**：中英文翻译
 
 ### 开关机制

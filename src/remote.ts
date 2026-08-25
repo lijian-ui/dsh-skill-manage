@@ -5,6 +5,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve as resolvePath } from 'node:path'
 import { homedir } from 'node:os'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+import { unzipSync } from 'fflate'
 import {
   DISABLED_SUFFIX,
   collectSkillEntries,
@@ -15,13 +16,6 @@ import {
   type SkillEntry,
   type SkillRoot,
 } from './skill-files.js'
-import {
-  batchMigrateEntries,
-  migrateEntry,
-  normalizeWorkspace,
-  scopeRootOf,
-  workspaceSkillRoot,
-} from './scope.js'
 
 const SERVICE = 'skillManage'
 const PACKAGE = '@lijian-ui/dsh-skill-manage'
@@ -77,29 +71,8 @@ const setEnabledResultSchema = z.object({ name: z.string(), enabled: z.boolean()
 
 const deleteSkillResultSchema = z.object({ name: z.string() })
 
-const migratePayloadSchema = z.object({
-  target: z.string().nullable(),
-  mode: z.enum(['copy', 'move']),
-})
-const migrateResultSchema = z.object({ name: z.string(), scope: scopeSchema })
-
-const batchMigratePayloadSchema = z.object({
-  from: z.string().nullable(),
-  targets: z.array(z.string().nullable()).min(1),
-  mode: z.enum(['copy', 'move']),
-  names: z.array(z.string()),
-})
-const batchMigrateResultSchema = z.object({
-  results: z.array(z.object({ name: z.string(), target: z.string().nullable().optional(), ok: z.boolean(), error: z.string().optional() })),
-})
-
-const addFileSchema = z.object({ path: z.string(), base64: z.string() })
-const addPayloadSchema = z.object({
-  kind: z.enum(['bundle', 'flat']),
-  files: z.array(addFileSchema).min(1),
-  workspace: z.string().nullable().optional(),
-})
-const addResultSchema = z.object({ name: z.string(), kind: z.enum(['bundle', 'flat']), scope: scopeSchema })
+const zipPayloadSchema = z.object({ base64: z.string() })
+const zipResultSchema = z.object({ name: z.string(), scope: scopeSchema })
 
 const MANIFEST = {
   package: PACKAGE,
@@ -152,31 +125,6 @@ const MANIFEST = {
       result: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#SetEnabledResult`, schema: setEnabledResultSchema },
     },
     {
-      id: `${PACKAGE}#${SERVICE}/migrate`,
-      service: SERVICE,
-      namespace: SERVICE,
-      method: 'migrate',
-      invocation: { kind: 'direct' },
-      parameters: [
-        { name: 'name', wire: 'name', source: 'json', codec: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#SkillName`, schema: z.string() } },
-        { name: 'sessionId', wire: 'sessionId', source: 'json', acceptsUndefined: true, codec: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#sessionId`, schema: sessionIdSchema } },
-        { name: 'payload', wire: 'payload', source: 'json', codec: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#MigratePayload`, schema: migratePayloadSchema } },
-      ],
-      result: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#MigrateResult`, schema: migrateResultSchema },
-    },
-    {
-      id: `${PACKAGE}#${SERVICE}/batchMigrate`,
-      service: SERVICE,
-      namespace: SERVICE,
-      method: 'batchMigrate',
-      invocation: { kind: 'direct' },
-      parameters: [
-        { name: 'sessionId', wire: 'sessionId', source: 'json', acceptsUndefined: true, codec: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#sessionId`, schema: sessionIdSchema } },
-        { name: 'payload', wire: 'payload', source: 'json', codec: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#BatchMigratePayload`, schema: batchMigratePayloadSchema } },
-      ],
-      result: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#BatchMigrateResult`, schema: batchMigrateResultSchema },
-    },
-    {
       id: `${PACKAGE}#${SERVICE}/deleteSkill`,
       service: SERVICE,
       namespace: SERVICE,
@@ -189,23 +137,23 @@ const MANIFEST = {
       result: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#DeleteSkillResult`, schema: deleteSkillResultSchema },
     },
     {
-      id: `${PACKAGE}#${SERVICE}/addSkill`,
+      id: `${PACKAGE}#${SERVICE}/importZip`,
       service: SERVICE,
       namespace: SERVICE,
-      method: 'addSkill',
+      method: 'importZip',
       invocation: { kind: 'direct' },
       parameters: [
         { name: 'sessionId', wire: 'sessionId', source: 'json', acceptsUndefined: true, codec: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#sessionId`, schema: sessionIdSchema } },
-        { name: 'payload', wire: 'payload', source: 'json', codec: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#AddPayload`, schema: addPayloadSchema } },
+        { name: 'payload', wire: 'payload', source: 'json', codec: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#ZipPayload`, schema: zipPayloadSchema } },
       ],
-      result: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#AddResult`, schema: addResultSchema },
+      result: { mode: 'strict' as const, typeSymbol: `${PACKAGE}#ZipResult`, schema: zipResultSchema },
     },
   ],
   model: { services: [], events: [], objects: [] },
 }
 
-const MAX_ADD_FILES = 200
-const MAX_ADD_TOTAL_BYTES = 8 * 1024 * 1024
+const MAX_ZIP_BYTES = 8 * 1024 * 1024
+const MAX_IMPORT_ENTRIES = 200
 
 interface ScopeInfo {
   kind: 'global' | 'workspace'
@@ -339,12 +287,6 @@ class SkillManageApi extends TypertRemoteService {
   scopeForEntry(entry: SkillEntry): ScopeInfo {
     if (entry.projectRoot !== undefined) return { kind: 'workspace', path: entry.projectRoot, label: basename(entry.projectRoot) || entry.projectRoot }
     return { kind: 'global' }
-  }
-
-  scopeForTarget(targetRoot: string, targetProject: string | null | undefined): ScopeInfo {
-    const { dshHome } = this.homes()
-    if (resolvePath(targetRoot) === resolvePath(join(dshHome, 'skills'))) return { kind: 'global' }
-    return { kind: 'workspace', path: targetProject ?? undefined, label: targetProject !== undefined && targetProject !== null ? (basename(targetProject) || targetProject) : undefined }
   }
 
   async list(sessionId: string | undefined): Promise<{ skills: SkillSummary[] }> {
@@ -505,144 +447,83 @@ class SkillManageApi extends TypertRemoteService {
     return { name }
   }
 
-  async migratableEntry(name: string, sessionId: string | undefined): Promise<SkillEntry | undefined> {
-    const entry = winnerEntry(await this.fileEntriesAll(), name)
-    if (entry !== undefined) return entry
-    const located = await this.locate(name, sessionId)
-    if (located.kind !== 'live') return undefined
-    const skill = located.skill
-    if (typeof skill.path !== 'string' || skill.path === '') return undefined
-    const { dshHome, agentsHome } = this.homes()
-    const userRoots = [join(dshHome, 'skills'), join(agentsHome, 'skills')]
-    if (!userRoots.some((root) => this.isWithin(root, skill.path))) return undefined
-    this.assertEditable(skill)
-    return { name: skill.name, file: skill.path, dirBundle: basename(skill.path) === 'SKILL.md', enabled: true, source: skill.source ?? 'user-dsh' }
-  }
+  async importZip(sessionId: string | undefined, payload: { base64: string }): Promise<{ name: string; scope: ScopeInfo }> {
+    const data = Buffer.from(payload.base64, 'base64')
+    if (data.length === 0 || data.length > MAX_ZIP_BYTES) throw new Error('压缩包大小需大于 0 且不超过 8MB')
+    if (data.length < 4 || data[0] !== 0x50 || data[1] !== 0x4b) throw new Error('不是有效的 ZIP 压缩文件')
 
-  async migrate(name: string, sessionId: string | undefined, payload: { target: string | null; mode: 'copy' | 'move' }): Promise<{ name: string; scope: ScopeInfo }> {
-    const { target: rawTarget, mode } = payload
-    const { dshHome } = this.homes()
-    const targetProject = rawTarget === null || rawTarget === undefined ? null : await normalizeWorkspace(rawTarget)
-    const targetRoot = scopeRootOf(targetProject, dshHome)
-    const entry = await this.migratableEntry(name, sessionId)
-    if (entry === undefined) throw new Error('技能 "' + name + '" 没有可迁移的文件（随部署附带或运行时内置的技能不可迁移）')
-    await migrateEntry(entry, targetRoot, mode)
-    return { name, scope: this.scopeForTarget(targetRoot, targetProject) }
-  }
-
-  async batchMigrate(sessionId: string | undefined, payload: { from: string | null; targets: (string | null)[]; mode: 'copy' | 'move'; names: string[] }): Promise<{ results: Array<{ name: string; target?: string | null; ok: boolean; error?: string }> }> {
-    const { from: rawFrom, targets: rawTargets, mode, names } = payload
-    if (mode === 'move' && rawTargets.length > 1) throw new Error('移动模式只能选择一个目标作用域（多个目标请改用复制）')
-    const { dshHome, agentsHome } = this.homes()
-    const fromProject = rawFrom === null || rawFrom === undefined ? null : await normalizeWorkspace(rawFrom)
-    const fromRoots: Array<{ path: string; source: string; projectRoot?: string }> = fromProject === null
-      ? [{ path: join(dshHome, 'skills'), source: 'user-dsh' }, { path: join(agentsHome, 'skills'), source: 'user-agents' }]
-      : [{ path: workspaceSkillRoot(fromProject), source: 'project-dsh', projectRoot: fromProject }]
-
-    const byName = new Map<string, SkillEntry>()
-    for (const entry of await collectSkillEntries(fromRoots)) if (!byName.has(entry.name)) byName.set(entry.name, entry)
-    const chosen: SkillEntry[] = []
-    const results: Array<{ name: string; target?: string | null; ok: boolean; error?: string }> = []
-    for (const name of names) {
-      const entry = byName.get(name)
-      if (entry === undefined) results.push({ name, ok: false, error: '技能 "' + name + '" 不在源作用域中' })
-      else chosen.push(entry)
+    let rawEntries: Record<string, Uint8Array>
+    try {
+      rawEntries = unzipSync(new Uint8Array(data.buffer, data.byteOffset, data.byteLength))
+    } catch (error) {
+      throw new Error('压缩包解压失败：' + (error instanceof Error ? error.message : String(error)))
     }
-    for (const rawTarget of rawTargets) {
-      const targetProject = rawTarget === null || rawTarget === undefined ? null : await normalizeWorkspace(rawTarget)
-      const targetRoot = scopeRootOf(targetProject, dshHome)
-      if (fromRoots.some((root) => resolvePath(root.path) === resolvePath(targetRoot))) {
-        for (const entry of chosen) results.push({ name: entry.name, target: rawTarget ?? null, ok: false, error: '目标作用域与源作用域相同' })
-        continue
-      }
-      for (const item of await batchMigrateEntries(chosen, targetRoot, mode)) {
-        results.push({ name: item.name, target: rawTarget ?? null, ok: item.ok, ...(item.error === undefined ? {} : { error: item.error }) })
+
+    const files: Array<{ path: string; data: Buffer }> = []
+    for (const [rawPath, content] of Object.entries(rawEntries)) {
+      const path = rawPath.replaceAll('\\', '/')
+      if (path.endsWith('/')) continue
+      if (path.startsWith('/') || /^[a-zA-Z]:/.test(path)) throw new Error('压缩包含非法绝对路径：' + rawPath)
+      const segments = path.split('/')
+      if (segments.some((segment) => segment === '..' || segment === '.')) throw new Error('压缩包含非法相对路径：' + rawPath)
+      if (segments.includes('__MACOSX') || segments.includes('.DS_Store')) continue
+      files.push({ path, data: Buffer.from(content) })
+    }
+    if (files.length === 0) throw new Error('压缩包内没有有效文件')
+    if (files.length > MAX_IMPORT_ENTRIES) throw new Error('压缩包内文件过多（最多 ' + MAX_IMPORT_ENTRIES + ' 个）')
+    if (files.reduce((sum, file) => sum + file.data.length, 0) > MAX_ZIP_BYTES) throw new Error('技能解压后总大小超过 8MB 上限')
+
+    // 支持三种布局：根目录 SKILL.md / 唯一顶层文件夹包裹的 SKILL.md / 单个 .md 文件
+    let strip: string | null = null
+    let flatFile: { path: string; data: Buffer } | undefined
+    if (files.some((file) => file.path === 'SKILL.md')) {
+      strip = ''
+    } else {
+      const tops = new Set(files.map((file) => file.path.split('/')[0]))
+      const top = tops.size === 1 ? [...tops][0] : undefined
+      if (top !== undefined && files.some((file) => file.path === top + '/SKILL.md')) {
+        strip = top + '/'
+      } else if (files.length === 1 && files[0].path.toLowerCase().endsWith('.md')) {
+        flatFile = files[0]
+      } else {
+        throw new Error('压缩包中未找到 SKILL.md（应位于压缩包根目录、唯一的顶层文件夹内，或仅含一个 .md 文件）')
       }
     }
-    return { results }
-  }
 
-  async addSkill(sessionId: string | undefined, payload: { kind: 'bundle' | 'flat'; files: Array<{ path: string; base64: string }>; workspace?: string | null }): Promise<{ name: string; kind: 'bundle' | 'flat'; scope: ScopeInfo }> {
-    const { kind, files, workspace: rawWorkspace } = payload
-    if (files.length > MAX_ADD_FILES) throw new Error('文件数量过多（最多 ' + MAX_ADD_FILES + ' 个）')
-    const decoded = files.map((file) => {
-      const data = Buffer.from(file.base64, 'base64')
-      if (data.length === 0 && file.base64.length > 0) throw new Error('文件内容解码失败：' + file.path)
-      return { path: file.path.replaceAll('\\', '/'), data }
-    })
-    if (decoded.reduce((sum, file) => sum + file.data.length, 0) > MAX_ADD_TOTAL_BYTES) throw new Error('技能总大小超过 8MB 上限')
-
-    for (const file of decoded) {
-      if (file.path.startsWith('/') || file.path.split('/').some((segment) => segment === '..' || segment === '.')) throw new Error('非法文件路径：' + file.path)
-    }
-
-    const { dshHome } = this.homes()
-    let targetProject: string | null | undefined
-    let targetRoot: string
-    if (rawWorkspace === undefined || rawWorkspace === null || rawWorkspace === '') {
-      targetRoot = join(dshHome, 'skills')
-    } else {
-      targetProject = await normalizeWorkspace(rawWorkspace)
-      targetRoot = workspaceSkillRoot(targetProject)
-    }
-
-    let name: string
-    let writes: Array<{ relative: string; data: Buffer }>
-    if (kind === 'bundle') {
-      const tops = new Set(decoded.map((file) => file.path.split('/')[0]))
-      if (tops.size !== 1 || decoded.some((file) => file.path.split('/').length < 2)) throw new Error('技能文件夹结构不正确：所有文件应位于同一个文件夹内')
-      const top = [...tops][0]
-      const skillFile = decoded.find((file) => file.path === top + '/SKILL.md')
-      if (skillFile === undefined) throw new Error('技能文件夹缺少顶层的 SKILL.md 文件')
-      const validation = validateFrontmatter(skillFile.data.toString('utf8'))
-      if (!validation.ok) throw new Error('技能格式不符合要求：' + validation.error)
-      name = validation.skill.name
-      writes = decoded.map((file) => ({ relative: file.path.slice(top.length + 1), data: file.data }))
-    } else {
-      if (decoded.length !== 1) throw new Error('单个技能文件一次只能添加一个')
-      const file = decoded[0]
-      const flatName = file.path.split('/').filter(Boolean).pop() ?? ''
-      if (!flatName.toLowerCase().endsWith('.md')) throw new Error('技能文件必须是 .md 文件')
-      const validation = validateFrontmatter(file.data.toString('utf8'))
-      if (!validation.ok) throw new Error('技能格式不符合要求：' + validation.error)
-      name = validation.skill.name
-      writes = [{ relative: flatName, data: file.data }]
-    }
+    const source = flatFile ?? files.find((file) => file.path === strip + 'SKILL.md')!
+    const validation = validateFrontmatter(source.data.toString('utf8'))
+    if (!validation.ok) throw new Error('技能格式不符合要求：' + validation.error)
+    const name = validation.skill.name
+    const writes = flatFile !== undefined
+      ? [{ relative: name + '.md', data: flatFile.data }]
+      : files.map((file) => ({ relative: file.path.slice(strip!.length), data: file.data }))
 
     const existing = winnerEntry(await this.fileEntriesAll(), name)
     if (existing !== undefined) throw new Error('同名技能 "' + name + '" 已存在（' + (existing.enabled ? '已启用' : '已停用') + '，位于 ' + (existing.projectRoot !== undefined ? existing.projectRoot : '全局用户根') + '）')
     const { registry, cwd, scope } = this.viewFor(sessionId)
     if ((await registry.list({ cwd, scope })).some((skill) => skill.name === name)) throw new Error('同名技能 "' + name + '" 已存在')
 
-    const target = kind === 'bundle' ? join(targetRoot, name) : join(targetRoot, writes[0].relative)
+    const targetRoot = join(this.homes().dshHome, 'skills')
+    const target = join(targetRoot, name)
     const staging = join(targetRoot, '.dsh-skill-staging-' + process.pid + '-' + Math.random().toString(36).slice(2, 8))
     try {
-      if (kind === 'bundle') {
-        for (const write of writes) {
-          const filePath = join(staging, write.relative)
-          await mkdir(dirname(filePath), { recursive: true })
-          await writeFile(filePath, write.data)
-        }
-        await rename(staging, target)
-      } else {
-        await mkdir(staging, { recursive: true })
-        const stagedFile = join(staging, writes[0].relative)
-        await writeFile(stagedFile, writes[0].data)
-        await rename(stagedFile, target)
-        await rm(staging, { recursive: true, force: true }).catch(() => {})
+      for (const write of writes) {
+        const filePath = join(staging, write.relative)
+        await mkdir(dirname(filePath), { recursive: true })
+        await writeFile(filePath, write.data)
       }
+      await rename(staging, target)
     } catch (error) {
       await rm(staging, { recursive: true, force: true }).catch(() => {})
-      await rm(target, { recursive: true, force: true }).catch(() => {})
-      throw new Error('写入技能文件失败（已回滚）：' + (error instanceof Error ? error.message : String(error)))
+      throw new Error('写入技能文件失败：' + (error instanceof Error ? error.message : String(error)))
     }
 
-    const accepted = await this.waitForDiscovery(name, sessionId, targetProject ?? cwd)
+    const accepted = await this.waitForDiscovery(name, sessionId)
     if (!accepted) {
       await rm(target, { recursive: true, force: true }).catch(() => {})
       throw new Error('DSH 未接受该技能（格式校验未通过），已回滚。请检查 frontmatter 后重试')
     }
-    return { name, kind, scope: targetProject !== undefined && targetProject !== null ? { kind: 'workspace', path: targetProject, label: basename(targetProject) || targetProject } : { kind: 'global' } }
+    return { name, scope: { kind: 'global' } }
   }
 
   async waitForDiscovery(name: string, sessionId: string | undefined, probeCwd?: string): Promise<boolean> {
