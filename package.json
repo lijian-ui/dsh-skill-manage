@@ -1,6 +1,6 @@
 {
   "name": "@lijian-ui/dsh-skill-manage",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Skill management plugin for DeepSeek Harness (dsh): list / enable / disable / delete / add skills from the web UI settings panel. 为 DeepSeek Harness 提供技能管理：列表 / 启用 / 停用 / 删除 / 添加。",
   "license": "MIT",
   "type": "module",
