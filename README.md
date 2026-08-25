@@ -29,15 +29,13 @@ This plugin implements true toggle control via a `.disabled` file rename mechani
 
 ### Integration in dsh-desktop
 
-1. Add the plugin as a project dependency:
+1. Install the plugin:
 
 ```bash
-npm install @lijian-ui/dsh-skill-manage
+dsh plugin add @lijian-ui/dsh-skill-manage
 ```
 
-2. Register the plugin in dsh desktop's plugin configuration (typically in `src/main/profile-init.ts`).
-
-3. Restart the desktop app.
+2. Restart the desktop app.
 
 ### Local Development
 

@@ -29,15 +29,13 @@ dsh 官方目前**没有** skill 启用/停用控制功能——无 CLI 命令�
 
 ### 在 dsh-desktop 项目中集成
 
-1. 将插件添加为项目依赖：
+1. 安装插件：
 
 ```bash
-npm install @lijian-ui/dsh-skill-manage
+dsh plugin add @lijian-ui/dsh-skill-manage
 ```
 
-2. 在 dsh 桌面端的插件注册配置中添加本插件（通常在 `src/main/profile-init.ts` 中）。
-
-3. 重启桌面端。
+2. 重启桌面端。
 
 ### 本地开发
 
