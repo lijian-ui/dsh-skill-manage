@@ -351,7 +351,7 @@ class SkillManageApi extends TypertRemoteService {
       if (registry !== undefined && typeof registry.list === 'function') {
         for (const workspace of registry.list()) {
           try {
-            if ((await workspace.status()) !== 'ok') continue
+            if (typeof workspace.status === 'function' && (await workspace.status()) !== 'ok') continue
           } catch {
           }
           await add(workspace.path, workspace.title, Array.isArray(workspace.sessionIds) ? workspace.sessionIds.length : 0)
@@ -418,6 +418,7 @@ class SkillManageApi extends TypertRemoteService {
       const skill = located.skill
       this.assertEditable(skill)
       if (enabled) return { name, enabled: true }
+      if (skill.path === undefined) throw new Error('技能路径不存在')
       const target = skill.path + DISABLED_SUFFIX
       if (await pathExists(target)) throw new Error('目标文件已存在：' + target)
       await rename(skill.path, target)
@@ -437,8 +438,10 @@ class SkillManageApi extends TypertRemoteService {
     if (located.kind === 'live') {
       const skill = located.skill
       this.assertEditable(skill)
-      if (basename(skill.path) === 'SKILL.md') await rm(dirname(skill.path), { recursive: true, force: true })
-      else await rm(skill.path, { force: true })
+      if (skill.path !== undefined) {
+        if (basename(skill.path) === 'SKILL.md') await rm(dirname(skill.path), { recursive: true, force: true })
+        else await rm(skill.path, { force: true })
+      }
       return { name }
     }
     const entry = located.entry
@@ -542,7 +545,9 @@ class SkillManageApi extends TypertRemoteService {
 
 export function registerSkillManageRemote(ctx: Context): void {
   new SkillManageApi(ctx)
+  // @ts-ignore cordis.effect accepts a plain callback (disposer is optional)
   ctx.effect(
+    // @ts-ignore - typert.register returns unknown, acceptable as a plain callback
     () => (ctx as Context & { typert: { register(manifest: typeof MANIFEST): unknown } }).typert.register(MANIFEST),
     'skill-manage: typert manifest',
   )
