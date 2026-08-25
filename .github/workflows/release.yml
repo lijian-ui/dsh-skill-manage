@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org/
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack release artifact
+        run: |
+          PACK_NAME=$(node -p "require('./package.json').name" | cut -d'/' -f2)
+          PACK_VERSION=$(node -p "require('./package.json').version")
+          tar -czf "${PACK_NAME}-v${PACK_VERSION}.tar.gz" lib cordis.patch.yml package.json README.md LICENSE
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          PREV=$(git describe --tags --abbrev=0 "$TAG~1" 2>/dev/null || echo "")
+          if [ -z "$PREV" ]; then
+            BODY=$(git log --oneline --no-merges)
+          else
+            BODY=$(git log --oneline --no-merges "$PREV..$TAG" 2>/dev/null || git log --oneline --no-merges "$PREV..HEAD")
+          fi
+          {
+            echo "body<<EOF"
+            echo "$BODY"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.changelog.outputs.body }}
+          files: |
+            *.tar.gz
