@@ -2,13 +2,13 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type ChangeEvent 
 import { IconSearchOutline16, IconSkillOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Dict } from './client-i18n.ts'
 
-interface ScopeInfo {
+export interface ScopeInfo {
   kind: 'global' | 'workspace'
   path?: string
   label?: string
 }
 
-interface SkillSummary {
+export interface SkillSummary {
   name: string
   description: string
   whenToUse?: string
@@ -20,7 +20,7 @@ interface SkillSummary {
   scope?: ScopeInfo
 }
 
-interface SkillContent {
+export interface SkillContent {
   name: string
   description: string
   content: string
@@ -29,7 +29,7 @@ interface SkillContent {
   path?: string
 }
 
-interface WorkspaceInfo {
+export interface WorkspaceInfo {
   path: string
   label: string
   sessions: number

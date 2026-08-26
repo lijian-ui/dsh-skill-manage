@@ -1,6 +1,9 @@
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+// Type-only pulls the Context.locale merge (the locale domain owns that service's type home).
+import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { SkillManageSection } from './SkillManageSection.tsx'
+import type { SkillSummary, SkillContent, WorkspaceInfo } from './SkillManageSection.tsx'
 import { zh as clientZh, en as clientEn, type Dict } from './client-i18n.ts'
 
 const SECTION_ID = 'skill-manage'
@@ -9,9 +12,17 @@ const I18N_NS = 'settings.skills'
 const SERVICE = 'skillManage'
 const PACKAGE = '@lijian-ui/dsh-skill-manage'
 
+// Register this plugin's dictionary keys in the locale namespace map so
+// ctx.locale.register/bind accept the namespace key.
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface LocaleNamespaceMap {
+    'settings.skills': keyof typeof clientZh
+  }
+}
+
 export const inject = ['slots', 'locale', 'remote', 'sessions']
 
-type RemoteMethod = (arg: unknown) => Promise<{ ok: boolean; value?: unknown; error?: { code?: string; message?: string } }>
+type RemoteMethod = (...args: unknown[]) => Promise<{ ok: boolean; value?: unknown; error?: { code?: string; message?: string } }>
 type RemoteRegistry = Record<string, RemoteMethod>
 type RemoteCtx = { get(key: string): RemoteRegistry }
 type SessionsCtx = { get(key: string): { currentProvideInfo: { getSnapshot(): { sessionId: string | undefined } } } }
@@ -130,12 +141,12 @@ export function apply(ctx: ClientContext): void {
   const mount = (ctx as ClientContext & MountCtx).remote.$mount(CONTRIBUTION)
   const currentSessionId = (): string | undefined => (ctx as unknown as SessionsCtx).get('sessions').currentProvideInfo.getSnapshot().sessionId
 
-  const callRemote = async (method: string, ...args: unknown[]): Promise<unknown> => {
+  const callRemote = async <T>(method: string, ...args: unknown[]): Promise<T> => {
     await mount
     const remote = (ctx as unknown as RemoteCtx).get(`remote.${SERVICE}`)
     const result = await remote[method](...args)
     if (!result.ok) throw new Error(`${SERVICE}.${method} failed: ${result.error?.code}: ${result.error?.message}`)
-    return result.value
+    return result.value as T
   }
 
   ctx.slots.inject('settings.section', () => ctx.slots.register({
@@ -147,12 +158,12 @@ export function apply(ctx: ClientContext): void {
     inject: () => ({
       t,
       currentSessionId,
-      listSkills: () => callRemote('list', currentSessionId()),
-      listWorkspaces: () => callRemote('workspaces'),
-      loadContent: (name: string) => callRemote('content', name, currentSessionId()),
-      setSkillEnabled: (name: string, enabled: boolean) => callRemote('setEnabled', name, currentSessionId(), enabled),
-      removeSkill: (name: string) => callRemote('deleteSkill', name, currentSessionId()),
-      importSkillZip: (base64: string) => callRemote('importZip', currentSessionId(), { base64 }),
+      listSkills: () => callRemote<{ skills: SkillSummary[] }>('list', currentSessionId()),
+      listWorkspaces: () => callRemote<{ workspaces: WorkspaceInfo[] }>('workspaces'),
+      loadContent: (name: string) => callRemote<SkillContent | null>('content', name, currentSessionId()),
+      setSkillEnabled: (name: string, enabled: boolean) => callRemote<{ name: string; enabled: boolean }>('setEnabled', name, currentSessionId(), enabled),
+      removeSkill: (name: string) => callRemote<{ name: string }>('deleteSkill', name, currentSessionId()),
+      importSkillZip: (base64: string) => callRemote<{ name: string }>('importZip', currentSessionId(), { base64 }),
       refreshSkillCache: () => (ctx as unknown as EmitCtx).emit('connection/reset'),
     }),
   }, SkillManageSection))
