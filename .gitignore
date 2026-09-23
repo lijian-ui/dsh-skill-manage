@@ -3,3 +3,4 @@ lib/
 *.tsbuildinfo
 .DS_Store
 Thumbs.db
+.workbuddy/
