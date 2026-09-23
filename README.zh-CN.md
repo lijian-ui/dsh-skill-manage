@@ -2,7 +2,7 @@
 
 [English](./README.md) | **中文**
 
-> 为 DeepSeek Harness (dsh) 桌面端提供技能管理功能：列表 / 启用 / 停用 / 删除 / 添加，填补 dsh 官方在 skill 开关控制方面的空白。
+> 为 DeepSeek Harness (dsh) 提供技能管理：在设置面板里列表 / 启用 / 停用 / 删除 / 添加 .zip 技能，并通过 agent 可调用的 `skill_manage` 工具，让 LLM 在会话中直接创建 / 修改 / 删除技能文件。同时支持 dsh web 端与官方桌面端。
 
 ## 功能概览
 
@@ -13,6 +13,7 @@
 | 删除技能 | 永久删除技能文件，带自定义确认弹窗 |
 | 添加技能 | 选择 .zip 压缩包，自动解压安装到全局技能目录（~/.dsh/skills） |
 | 技能详情 | Markdown 渲染技能内容，展示 frontmatter 元数据表格 |
+| Agent 工具 `skill_manage` | LLM 可调用工具：通过工具调用创建 / 修改 / 删除技能，支持 `global` 或 `workspace` 作用域 |
 
 ## 背景
 
@@ -20,22 +21,28 @@ dsh 官方目前**没有** skill 启用/停用控制功能——无 CLI 命令�
 
 本插件通过 `.disabled` 文件重命名机制实现真正的开关控制：将 `SKILL.md` 重命名为 `SKILL.md.disabled`，dsh 官方 provider 只识别 `.md` 结尾的文件，`.disabled` 文件会被忽略，从而实现"停用"。
 
+## 0.2.0 破坏性变更
+
+本版本对下游使用者包含破坏性变更：
+
+- **typert RPC 契约对齐官方 `create` 工厂**。host/client 编解码改为 `create: () => schema`（自 dsh `0.1.6-alpha.1` 起要求）。不再兼容旧的仅 `schema` 契约（如 dsh-desktop 0.5.0）。
+- **依赖改为 `peerDependencies` 并开放范围**。所有 `@deepseek-ai/*` 包（含 `cordis` 与各 `dsh-*`）现均为 `peerDependencies` 且使用 `^` 范围，运行时绑定宿主的 dsh 版本，而非锁定某个精确构建。本地构建的精确版本保留在 `devDependencies`。这也满足桌面端插件图校验器——它拒收声明在 `dependencies` 里的共享包。
+- **天然跨端**。同一份 bundle 在 dsh web 端与官方桌面端都能运行，无需为某端重写。（注意：插件按 *profile* 安装；装进 `web` profile 不会在 `desktop` profile 出现，反之亦然——那是 profile 隔离，不是不兼容。）
+
 ## 安装
 
 ### 前置条件
 
-- DeepSeek Harness (dsh) 桌面端
-- Node.js >= 18
+- DeepSeek Harness (dsh) **web 端或官方桌面端**，`dsh` >= 0.1.6-alpha.1
+- Node.js >= 18（仅本地开发需要）
 
-### 在 dsh-desktop 项目中集成
-
-1. 安装插件：
+### 通过 dsh 安装
 
 ```bash
-dsh plugin add @lijian-ui/dsh-skill-manage
+dsh plugin --profile web add @lijian-ui/dsh-skill-manage
 ```
 
-2. 重启桌面端。
+`--profile` 为必填，指定安装到哪个 profile（`web` 或 `desktop`）。插件按 profile 隔离：装进 `web` 不会在 `desktop` 出现，反之亦然。安装后重启应用。
 
 ### 本地开发
 
@@ -56,11 +63,11 @@ npm run watch
 npm run typecheck
 ```
 
-构建产物在 `lib/` 目录下，通过 junction 自动同步到 `node_modules/@lijian-ui/dsh-skill-manage`。每次构建后需重启桌面端加载新 bundle。
+构建产物在 `lib/` 目录下，通过 junction 自动同步到 `node_modules/@lijian-ui/dsh-skill-manage`。每次构建后需重启应用加载新 bundle。
 
 ## 使用方式
 
-1. 打开 dsh 桌面端
+1. 打开 dsh（web 或桌面）
 2. 进入 **设置** → **技能管理**
 3. 在技能列表中：
    - 点击滑块按钮启用/停用技能
@@ -68,6 +75,23 @@ npm run typecheck
    - 点击技能卡片查看详情
    - 使用搜索框过滤技能
    - 点击"添加技能"并选择 .zip 压缩包，导入到全局技能目录
+
+### Agent 工具 `skill_manage`
+
+插件同时注册了一个名为 `skill_manage` 的 agent 可调用工具，LLM 可在会话中创建、修改或删除技能。
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `action` | `create` \| `modify` \| `delete` | 是 | 操作类型 |
+| `name` | string | 是 | 技能名（仅小写字母、数字与连字符，如 `my-skill`） |
+| `description` | string | 仅 create | 技能描述 |
+| `when_to_use` | string | 否 | 技能触发时机说明 |
+| `content` | string | 仅 create | 技能正文（Markdown） |
+| `scope` | `global` \| `workspace` | 否（默认 `global`） | 写入位置：`global` → `~/.dsh/skills`；`workspace` → `<项目>/.dsh/skills` |
+
+- `delete` 复用与 GUI 删除相同的文件逻辑。
+- `workspace` 作用域会从会话 cwd 向上寻找含 `.git` 的目录作为项目根。
+- 所有写入都落在 dsh 主技能目录（`~/.dsh/skills` 或 `<项目>/.dsh/skills`），而 dsh 正是扫描这些目录，因此新建技能会被立即发现。
 
 ### 技能文件约定
 
@@ -92,9 +116,8 @@ npm run typecheck
 ```
 extensions/dsh-skill-manage/
 ├── src/
-│   ├── index.ts                    # Host 端入口
-│   ├── remote.ts                   # Host 端 RPC 方法（list/setEnabled/deleteSkill 等）
-│   ├── skill-files.ts              # 文件约定（DISABLED_SUFFIX、collectSkillEntries）
+│   ├── index.ts                    # Host 端入口（inject: typert, settings, skills, sessions, agents, tools）
+│   ├── remote.ts                   # Host 端 RPC 方法（list/setEnabled/deleteSkill/importZip）+ skill_manage 工具注册
 │   ├── skill-files.ts              # 文件约定（DISABLED_SUFFIX、collectSkillEntries、frontmatter 校验）
 │   └── client/
 │       ├── index.ts                # Client 端入口（SECTION_ID、RPC 注册、inject）
@@ -119,6 +142,7 @@ extensions/dsh-skill-manage/
 | `deleteSkill(name, sessionId)` | 删除技能 |
 | `importZip(sessionId, payload)` | 解压 .zip 压缩包，导入技能到全局技能目录（`<DSH_HOME>/skills`，默认 `~/.dsh/skills`） |
 | `workspaces()` | 列出可用工作区 |
+| `skill_manage`（agent 工具） | LLM 可调用：`create` / `modify` / `delete` 技能（`scope`：`global` → `~/.dsh/skills`，`workspace` → `<项目>/.dsh/skills`） |
 
 ### Client 端（`src/client/`）
 
@@ -164,6 +188,8 @@ extensions/dsh-skill-manage/
 - **Markdown 渲染**：`@deepseek-ai/dsh-client-ui-primitives` 的 `MarkdownText` 组件
 - **YAML 解析**：yaml (frontmatter 解析)
 - **文件监听**：dsh 官方的 chokidar watcher（自动检测技能文件变化）
+- **运行时依赖**：`fflate`、`yaml`、`zod`
+- **宿主依赖（peer）**：全部 `@deepseek-ai/*` —— `cordis ^4.0.0`、各 `dsh-*` `^0.1.0`、`dsh-tools ^0.1.0` —— 开放范围，运行时绑定宿主 dsh 版本
 
 ## 许可证
 

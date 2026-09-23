@@ -1,18 +1,22 @@
 import { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-settings'
 import { registerSkillManageRemote } from './remote.js'
 
-export const inject = ['typert', 'settings', 'skills', 'sessions', 'agents']
+// 只保留确实必需的 host 服务：cordis 的 inject 是硬依赖，声明了但运行环境
+// 不提供的服务会让整个 apply 一直被挂起、永不执行（例如 web profile 可能没有
+// skills / agents / tools）。skills / sessions / agents / tools 一律改为在代码里
+// 按需、防御式取用（ctx.get(...) + 空值判断）。
+export const inject = ['typert', 'settings']
 
-const NS = settingsNamespace('skill-manage')
+const NS = 'skill-manage'
 
 export const Config = Schema.object({})
 
 export function apply(ctx: Context): void {
   installConsoleLoggerExporter(ctx)
 
-  installSettingsSection(ctx, NS, Config, {}, {
+  ctx.settings?.installSection(ctx, NS, Config, {}, {
     setSource: () => {},
     onChange: () => {},
   })

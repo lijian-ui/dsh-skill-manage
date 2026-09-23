@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type ChangeEvent } from 'react'
-import { IconSearchOutline16, IconSkillOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconSearchOutline16, IconSkillOutline16, MarkdownText, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Dict } from './client-i18n.ts'
 
 export interface ScopeInfo {
@@ -37,7 +37,6 @@ export interface WorkspaceInfo {
 
 interface SkillManageSectionProps {
   t: (key: keyof Dict) => string
-  currentSessionId: () => string | undefined
   listSkills: () => Promise<{ skills: SkillSummary[] }>
   listWorkspaces: () => Promise<{ workspaces: WorkspaceInfo[] }>
   loadContent: (name: string) => Promise<SkillContent | null>
@@ -73,11 +72,6 @@ const CSS_TEXT = `
 .SKM_cardTitle[data-disabled=true]{color:var(--dsw-alias-label-tertiary)}
 .SKM_cardDesc{text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:12px;line-height:16px;color:var(--dsw-alias-label-tertiary);margin:0}
 .SKM_cardActions{align-items:center;gap:8px;display:inline-flex;flex:none}
-.SKM_switch{width:36px;height:21px;border-radius:999px;border:none;background:var(--dsw-alias-border-l2);position:relative;cursor:pointer;flex:none;padding:0;transition:background-color .15s ease}
-.SKM_switch[data-on=true]{background:var(--dsw-alias-state-business-primary,#185FA5)}
-.SKM_switch:disabled{cursor:default;opacity:.6}
-.SKM_switchThumb{position:absolute;left:2px;top:2px;width:17px;height:17px;border-radius:50%;background:var(--dsw-alias-label-primary-foreground);box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .15s ease}
-.SKM_switch[data-on=true] .SKM_switchThumb{left:17px}
 .SKM_deleteBtn{font:inherit;color:var(--dsw-alias-state-error-primary);cursor:pointer;background:0 0;border:1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 40%, transparent);border-radius:6px;padding:3px 8px;font-size:11px;line-height:16px}
 .SKM_deleteBtn:hover:not(:disabled){background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, transparent)}
 .SKM_deleteBtn:disabled{cursor:default;opacity:.6}
@@ -221,7 +215,7 @@ function DetailContent({ raw }: { raw: string }): ReactNode {
         </div>
       ) : null}
       <div className="SKM_detailMd">
-        <MarkdownText text={body} />
+        <MarkdownText text={body} labels={{ code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' }} />
       </div>
     </>
   )
@@ -240,7 +234,7 @@ interface DetailState {
 interface AddingState { status: 'idle' | 'busy' | 'ok' | 'error'; message?: string }
 
 export function SkillManageSection(props: SkillManageSectionProps): ReactNode {
-  const { t, currentSessionId, listSkills, loadContent, setSkillEnabled, removeSkill, importSkillZip, listWorkspaces, refreshSkillCache } = props
+  const { t, listSkills, loadContent, setSkillEnabled, removeSkill, importSkillZip, listWorkspaces, refreshSkillCache } = props
   const [query, setQuery] = useState('')
   const [listState, setListState] = useState<ListState>({ status: 'loading' })
   const [request, setRequest] = useState(0)
@@ -262,8 +256,10 @@ export function SkillManageSection(props: SkillManageSectionProps): ReactNode {
       if (!current) return
       const skills = snapshot !== null && typeof snapshot === 'object' && Array.isArray(snapshot.skills) ? [...snapshot.skills].sort((a, b) => a.name.localeCompare(b.name)) : []
       setListState({ status: 'ready', skills })
-    }, () => {
-      if (current) setListState({ status: 'error' })
+    }, (err) => {
+      if (!current) return
+      console.error('[skill-manage] 读取技能列表失败', err)
+      setListState({ status: 'error' })
     })
     return () => { current = false }
   }, [listSkills, request])
@@ -291,8 +287,8 @@ export function SkillManageSection(props: SkillManageSectionProps): ReactNode {
     }, 800)
   }
 
-  const applySetEnabled = (skill: SkillSummary): void => {
-    const target = skill.enabled !== true
+  const applySetEnabled = (skill: SkillSummary, next: boolean): void => {
+    const target = next
     setOps((prev) => ({ ...prev, [skill.name]: { status: 'busy' } }))
     Promise.resolve().then(() => setSkillEnabled(skill.name, target)).then(() => {
       setListState((prev) => (prev.status === 'ready' ? { status: 'ready', skills: prev.skills.map((s) => (s.name === skill.name ? { ...s, enabled: target } : s)) } : prev))
@@ -428,8 +424,7 @@ export function SkillManageSection(props: SkillManageSectionProps): ReactNode {
               <button type="button" className="SKM_addDismiss" onClick={() => setAdding({ status: 'idle' })}>{t('addDismiss')}</button>
             </div>
           ) : null}
-          {currentSessionId() === undefined ? <p className="SKM_status">{t('noSession')}</p> : null}
-          {skills.length === 0 && currentSessionId() !== undefined ? <p className="SKM_status">{t('empty')}</p> : null}
+          {skills.length === 0 ? <p className="SKM_status">{t('empty')}</p> : null}
           {skills.length > 0 && scoped.length === 0 ? <p className="SKM_status">{t('emptyScope')}</p> : null}
           {scoped.length > 0 && filtered.length === 0 ? <p className="SKM_status">{t('emptySearch')}</p> : null}
           {filtered.length > 0 ? (
@@ -450,9 +445,7 @@ export function SkillManageSection(props: SkillManageSectionProps): ReactNode {
                       </div>
                       <span className="SKM_cardActions">
                         {editable ? (
-                          <button type="button" role="switch" className="SKM_switch" data-on={enabled ? 'true' : undefined} aria-checked={enabled} aria-label={enabled ? t('switchDisable') : t('switchEnable')} disabled={op?.status === 'busy'} onClick={(e) => { e.stopPropagation(); applySetEnabled(skill) }}>
-                            <span className="SKM_switchThumb" />
-                          </button>
+                          <Switch checked={enabled} disabled={op?.status === 'busy'} label={skill.name} onChange={(next) => { applySetEnabled(skill, next) }} />
                         ) : null}
                         {editable ? (
                           <button type="button" className="SKM_deleteBtn" disabled={op?.status === 'busy'} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(skill) }}>{t('deleteLabel')}</button>

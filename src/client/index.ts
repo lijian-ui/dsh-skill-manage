@@ -1,4 +1,7 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
+// Type-only pulls the Context.slots service for settings.section registration.
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // Type-only pulls the Context.locale merge (the locale domain owns that service's type home).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -25,12 +28,13 @@ export const inject = ['slots', 'locale', 'remote', 'sessions']
 type RemoteMethod = (...args: unknown[]) => Promise<{ ok: boolean; value?: unknown; error?: { code?: string; message?: string } }>
 type RemoteRegistry = Record<string, RemoteMethod>
 type RemoteCtx = { get(key: string): RemoteRegistry }
-type SessionsCtx = { get(key: string): { currentProvideInfo: { getSnapshot(): { sessionId: string | undefined } } } }
+// 官方 client `sessions` 服务（ISessions）：list 是可订阅快照，current 即当前会话 id。
+type SessionsCtx = { get(key: string): { list?: { getSnapshot(): { current?: string } } } | undefined }
 type MountCtx = { remote: { $mount(contribution: typeof CONTRIBUTION): Promise<unknown> } }
 type EmitCtx = { emit(event: string): void }
 
 const identity = (value: unknown): unknown => value
-const codec = (symbol: string) => ({ mode: 'strict' as const, typeSymbol: symbol, schema: { parse: identity } })
+const codec = (symbol: string) => ({ mode: 'strict' as const, typeSymbol: symbol, create: () => ({ parse: identity }) })
 
 const CONTRIBUTION = {
   package: PACKAGE,
@@ -103,7 +107,7 @@ const CONTRIBUTION = {
       result: codec(`${PACKAGE}#ZipResult`),
     },
   ],
-}
+} as unknown as TypertRemoteContribution
 
 // 官方设置外壳（dsh-client-ui-settings-general）的 navIcon() 按 section id 硬编码映射，
 // 未识别的 id 一律回退到齿轮。官方未提供图标扩展点，故在客户端监听 DOM，
@@ -139,13 +143,46 @@ export function apply(ctx: ClientContext): void {
 
   const t = ctx.locale.bind(I18N_NS) as (key: keyof Dict) => string
   const mount = (ctx as ClientContext & MountCtx).remote.$mount(CONTRIBUTION)
-  const currentSessionId = (): string | undefined => (ctx as unknown as SessionsCtx).get('sessions').currentProvideInfo.getSnapshot().sessionId
+  // 取当前会话 id：走官方 `sessions.list.getSnapshot().current`（官方 ui-session 内部同款读法）。
+  // 全程防御：服务缺失 / list 缺失 / 快照读取抛错，一律返回 undefined（视为"无当前会话"），
+  // 由 host 侧回退到全局层，绝不因此阻断技能列表渲染。
+  const currentSessionId = (): string | undefined => {
+    try {
+      return (ctx as unknown as SessionsCtx).get('sessions')?.list?.getSnapshot()?.current
+    } catch (err) {
+      console.warn('[skill-manage] 读取当前会话失败，按无会话处理', err)
+      return undefined
+    }
+  }
 
   const callRemote = async <T>(method: string, ...args: unknown[]): Promise<T> => {
-    await mount
+    try {
+      await mount
+    } catch (err) {
+      console.error(`[skill-manage] remote.$mount(${SERVICE}) 失败`, err)
+      throw err
+    }
     const remote = (ctx as unknown as RemoteCtx).get(`remote.${SERVICE}`)
-    const result = await remote[method](...args)
-    if (!result.ok) throw new Error(`${SERVICE}.${method} failed: ${result.error?.code}: ${result.error?.message}`)
+    if (remote === undefined || remote === null) {
+      const keys = Object.keys(ctx as unknown as Record<string, unknown>).filter((key) => key.startsWith('remote.'))
+      console.error(`[skill-manage] 挂载后仍取不到服务 remote.${SERVICE}；现有 remote.* 键：`, keys)
+      throw new Error(`remote.${SERVICE} 未挂载`)
+    }
+    let result: { ok: boolean; value?: unknown; error?: { code?: string; message?: string } }
+    try {
+      result = await remote[method](...args)
+    } catch (err) {
+      console.error(`[skill-manage] ${SERVICE}.${method} 调用抛出异常`, err)
+      throw err
+    }
+    if (result === null || typeof result !== 'object' || !('ok' in result)) {
+      console.warn(`[skill-manage] ${SERVICE}.${method} 返回了非信封形态，直接当结果使用`, result)
+      return result as unknown as T
+    }
+    if (!result.ok) {
+      console.error(`[skill-manage] ${SERVICE}.${method} 返回失败`, result.error)
+      throw new Error(`${SERVICE}.${method} failed: ${result.error?.code}: ${result.error?.message}`)
+    }
     return result.value as T
   }
 
@@ -157,7 +194,6 @@ export function apply(ctx: ClientContext): void {
     locale: I18N_NS,
     inject: () => ({
       t,
-      currentSessionId,
       listSkills: () => callRemote<{ skills: SkillSummary[] }>('list', currentSessionId()),
       listWorkspaces: () => callRemote<{ workspaces: WorkspaceInfo[] }>('workspaces'),
       loadContent: (name: string) => callRemote<SkillContent | null>('content', name, currentSessionId()),

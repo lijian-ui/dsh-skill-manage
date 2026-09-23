@@ -2,4 +2,3 @@
 - insert:
     - id: skill-manage
       name: '@lijian-ui/dsh-skill-manage'
-      config: {}

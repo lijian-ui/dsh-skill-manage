@@ -7,11 +7,11 @@ const CLIENT_EXTERNALS = [
   'react-dom/client',
   '@deepseek-ai/cordis',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
+
   '@deepseek-ai/dsh-client-ui-primitives',
   '@deepseek-ai/dsh-client-ui-attachment',
-  '@deepseek-ai/dsh-client-schema-form',
-  '@deepseek-ai/dsh-client-runtime/client',
+
+
 ]
 
 const hostConfig = {
@@ -20,6 +20,8 @@ const hostConfig = {
   outDir: 'lib',
   dts: true,
   clean: true,
+  // Keep ESM output at lib/index.js (no .mjs rename) so package.json main resolves.
+  fixedExtension: false,
 }
 
 const clientConfig = {
